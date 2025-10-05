@@ -27,64 +27,47 @@ app.use(express.json());
 // Initialize Firebase Admin using service account
 try {
   if (!admin.apps.length) {
-    // Priority 1: SERVICE_ACCOUNT_JSON env var (JSON string or base64 encoded)
+    const serviceAccountFilename = 'song-writing-assistant-4cd39-firebase-adminsdk-fbsvc-6d40c4e659.json';
     let serviceAccount;
-    const envJson = process.env.SERVICE_ACCOUNT_JSON;
-    if (envJson) {
-      try {
-        // If it's base64 encoded, try to decode. If it's raw JSON, parse directly.
-        const maybeBuffer = Buffer.from(envJson, 'base64').toString('utf8');
-        // If decoding base64 produced something that starts with '{', use it; otherwise try original
-        const jsonToParse = maybeBuffer.trim().startsWith('{') ? maybeBuffer : envJson;
-        serviceAccount = JSON.parse(jsonToParse);
-        console.log('✅ Loaded Firebase service account from SERVICE_ACCOUNT_JSON env var');
-      } catch (e) {
-        console.error('❌ Failed to parse SERVICE_ACCOUNT_JSON env var:', e.message);
-        throw e;
-      }
+    
+    // Priority 1: Check app root directory (for Render secret files)
+    const appRootPath = path.join(__dirname, serviceAccountFilename);
+    if (require('fs').existsSync(appRootPath)) {
+      serviceAccount = require(appRootPath);
+      console.log(`✅ Loaded Firebase service account from app root: ${appRootPath}`);
     } else {
-      // Priority 2: Mounted secret at /etc/secrets/<filename>
-      const secretFilename = process.env.SERVICE_ACCOUNT_FILENAME || 'song-writing-assistant-4cd39-firebase-adminsdk-fbsvc-6d40c4e659.json';
-      const secretPath = path.join('/etc/secrets', secretFilename);
-
+      // Priority 2: Check /etc/secrets/ (alternative Render mount point)
+      const secretPath = path.join('/etc/secrets', serviceAccountFilename);
       if (require('fs').existsSync(secretPath)) {
-        try {
-          serviceAccount = require(secretPath);
-          console.log(`✅ Loaded Firebase service account from mounted secret: ${secretPath}`);
-        } catch (e) {
-          console.error(`❌ Failed to require service account from ${secretPath}:`, e.message);
-          throw e;
-        }
+        serviceAccount = require(secretPath);
+        console.log(`✅ Loaded Firebase service account from /etc/secrets: ${secretPath}`);
       } else {
-        // Fallback: project relative path (existing behavior)
-        const fallbackPath = path.join(__dirname, '..', secretFilename);
+        // Fallback: Check parent directory (original behavior)
+        const fallbackPath = path.join(__dirname, '..', serviceAccountFilename);
         if (require('fs').existsSync(fallbackPath)) {
-          try {
-            serviceAccount = require(fallbackPath);
-            console.log(`⚠️ Loaded Firebase service account from fallback file: ${fallbackPath}`);
-          } catch (e) {
-            console.error(`❌ Failed to require service account from fallback ${fallbackPath}:`, e.message);
-            throw e;
-          }
+          serviceAccount = require(fallbackPath);
+          console.log(`⚠️ Loaded Firebase service account from fallback: ${fallbackPath}`);
         } else {
-          throw new Error(["Service account not found.",
-            "Provide it via SERVICE_ACCOUNT_JSON (raw JSON or base64),",
-            `or mount it at /etc/secrets/${secretFilename},`,
-            `or place it at ${fallbackPath}`].join(' '));
+          throw new Error(`Service account file not found. Checked:\n` +
+            `- App root: ${appRootPath}\n` +
+            `- Secrets: ${secretPath}\n` +
+            `- Fallback: ${fallbackPath}\n` +
+            `Please upload the service account file to one of these locations.`);
         }
       }
     }
-
+    
     admin.initializeApp({
       credential: admin.credential.cert(serviceAccount),
       databaseURL: `https://${serviceAccount.project_id}-default-rtdb.firebaseio.com`
     });
-
+    
     console.log('✅ Firebase Admin initialized successfully');
   }
 } catch (error) {
   console.error('❌ Firebase Admin initialization error:', error);
-  console.error('Please ensure the service account is provided via SERVICE_ACCOUNT_JSON, a mounted secret, or the fallback file path');
+  console.error('❌ Server cannot start without Firebase. Exiting...');
+  process.exit(1);
 }
 
 const db = admin.firestore();
